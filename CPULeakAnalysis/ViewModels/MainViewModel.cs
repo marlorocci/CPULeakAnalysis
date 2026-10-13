@@ -9,6 +9,21 @@ namespace CPULeakAnalysis.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly DatabaseService _db = new(); private readonly MilestoneProcessSampler _sampler = new(); private readonly DispatcherTimer _timer;
+    public ObservableCollection<string> TimeRanges { get; } =
+[
+    "1 Hour",
+    "6 Hours",
+    "12 Hours",
+    "24 Hours",
+    "3 Days",
+    "7 Days"
+];
+
+    [ObservableProperty]
+    private string selectedTimeRange = "24 Hours";
+
+    [ObservableProperty]
+    private int zoomPercent = 25;
     public ObservableCollection<CpuSample> Samples { get; } = new();
     [ObservableProperty] private bool isMonitoring;
     [ObservableProperty] private string status = "Initializing...";

@@ -21,7 +21,8 @@ public sealed class MilestoneProcessSampler
                         var wallMs = (now - prior.ObservedUtc).TotalMilliseconds;
                         var cpuMs = (total - prior.TotalProcessorTime).TotalMilliseconds;
                         var percent = wallMs <= 0 ? 0 : Math.Clamp(cpuMs / wallMs / Environment.ProcessorCount * 100d, 0d, 100d);
-                        output.Add(new CpuSample(
+                        output.Add(
+                            new CpuSample(
     now,
     p.Id,
     p.ProcessName,
