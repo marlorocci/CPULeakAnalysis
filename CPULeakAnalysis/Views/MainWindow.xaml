@@ -1,0 +1,56 @@
+<Window x:Class="CPULeakAnalysis.Views.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="clr-namespace:CPULeakAnalysis.ViewModels" xmlns:controls="clr-namespace:CPULeakAnalysis.Controls" Title="CPULeakAnalysis" Width="1180" Height="760" MinWidth="900" MinHeight="600" Background="#11151C">
+ <Window.DataContext><vm:MainViewModel/></Window.DataContext>
+ <Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="260"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <StackPanel><TextBlock Text="CPU Leak Analysis" FontSize="28" FontWeight="SemiBold" Foreground="White"/><TextBlock Text="Milestone processes only • rolling 7-day chart • SQLite history" Foreground="#AAB4C6"/></StackPanel>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="Interval (seconds)" Foreground="White" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox Width="60" Text="{Binding SampleIntervalSeconds,UpdateSourceTrigger=PropertyChanged}" Margin="0,0,10,0"/><Button Content="{Binding MonitorButtonText}" Command="{Binding ToggleMonitoringCommand}" Padding="14,7" Margin="0,0,8,0"/><Button Content="Clear database" Command="{Binding ClearDatabaseCommand}" Padding="14,7" Background="#B33A3A" Foreground="White"/></StackPanel>
+  </Grid>
+  <Border Grid.Row="1" Margin="0,18,0,12" CornerRadius="8" BorderBrush="#354052" BorderThickness="1"><controls:CpuChart ItemsSource="{Binding Samples}"/></Border>
+  <DataGrid Grid.Row="2" ItemsSource="{Binding Samples}" AutoGenerateColumns="False" IsReadOnly="True" Background="#1A202B" Foreground="White" RowBackground="#1A202B" AlternatingRowBackground="#202837" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+
+                <DataGridTextColumn
+        Header="Local Time"
+        Binding="{Binding LocalTimestamp, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}"
+        Width="170" />
+
+                <DataGridTextColumn
+        Header="Process"
+        Binding="{Binding ProcessName}"
+        Width="*" />
+
+                <DataGridTextColumn
+        Header="PID"
+        Binding="{Binding ProcessId}"
+        Width="80" />
+
+                <DataGridTextColumn
+        Header="CPU %"
+        Binding="{Binding CpuPercent, StringFormat=F2}"
+        Width="90" />
+
+                <DataGridTextColumn
+        Header="Working Set (MB)"
+        Binding="{Binding WorkingSetMb, StringFormat=F1}"
+        Width="120" />
+
+                <DataGridTextColumn
+        Header="Private MB"
+        Binding="{Binding PrivateBytesMb, StringFormat=F1}"
+        Width="120" />
+
+                <DataGridTextColumn
+        Header="Handles"
+        Binding="{Binding HandleCount}"
+        Width="90" />
+
+                <DataGridTextColumn
+        Header="Threads"
+        Binding="{Binding ThreadCount}"
+        Width="90" />
+
+            </DataGrid.Columns>
+        </DataGrid>
+  <Grid Grid.Row="3" Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding Status}" Foreground="#C9D3E5"/><TextBlock Text="{Binding DatabasePath}" Foreground="#71809A" FontSize="11"/></StackPanel><TextBlock Grid.Column="1" Foreground="White" FontSize="20"><Run Text="Current total: "/><Run Text="{Binding TotalCpuPercent,StringFormat=F2}"/><Run Text="%"/></TextBlock></Grid>
+ </Grid>
+</Window>
