@@ -31,6 +31,8 @@ public partial class ProcessDetailViewModel : ObservableObject
     };
     [ObservableProperty]
     private string selectedTimeRange = "7 Days";
+    [ObservableProperty]
+    private int zoomPercent = 100;
 
     partial void OnSelectedTimeRangeChanged(string value)
     {

@@ -147,10 +147,9 @@
                 </Grid>
 
                 <controls:CpuChart
-                Grid.Column="1"
                 ItemsSource="{Binding FilteredSamples}"
                 TimeRange="{Binding SelectedTimeSpan}"
-                ZoomPercent="{Binding ZoomPercent}" />
+                ZoomPercent="{Binding ZoomPercent}" Grid.ColumnSpan="2" Margin="35,0,0,0" />
 
             </Grid>
 
