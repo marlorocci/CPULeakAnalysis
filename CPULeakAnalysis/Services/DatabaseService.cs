@@ -10,10 +10,16 @@ public sealed class DatabaseService
     private string ConnectionString => new SqliteConnectionStringBuilder { DataSource = DatabasePath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString();
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
-        await using var connection = new SqliteConnection(ConnectionString);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(DatabasePath)!);
+
+        await using var connection =
+            new SqliteConnection(ConnectionString);
+
         await connection.OpenAsync();
+
         var command = connection.CreateCommand();
+
         command.CommandText = """
         CREATE TABLE IF NOT EXISTS CpuSamples (
             Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,14 +28,71 @@ public sealed class DatabaseService
             ProcessName TEXT NOT NULL,
             CpuPercent REAL NOT NULL,
             WorkingSetBytes INTEGER NOT NULL,
-            PrivateBytes INTEGER NOT NULL,
-            HandleCount INTEGER NOT NULL,
-            ThreadCount INTEGER NOT NULL
+            PrivateBytes INTEGER NOT NULL DEFAULT 0,
+            HandleCount INTEGER NOT NULL DEFAULT 0,
+            ThreadCount INTEGER NOT NULL DEFAULT 0
         );
-        
-        CREATE INDEX IF NOT EXISTS IX_CpuSamples_TimestampUtc ON CpuSamples(TimestampUtc);
+
+        CREATE INDEX IF NOT EXISTS
+            IX_CpuSamples_TimestampUtc
+        ON CpuSamples(TimestampUtc);
         """;
+
         await command.ExecuteNonQueryAsync();
+
+        await AddColumnIfMissing(
+            connection,
+            "PrivateBytes",
+            "INTEGER NOT NULL DEFAULT 0");
+
+        await AddColumnIfMissing(
+            connection,
+            "HandleCount",
+            "INTEGER NOT NULL DEFAULT 0");
+
+        await AddColumnIfMissing(
+            connection,
+            "ThreadCount",
+            "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static async Task AddColumnIfMissing(
+        SqliteConnection connection,
+        string columnName,
+        string definition)
+    {
+        var pragma = connection.CreateCommand();
+        pragma.CommandText =
+            "PRAGMA table_info(CpuSamples);";
+
+        bool exists = false;
+
+        await using var reader =
+            await pragma.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            string existingColumn =
+                reader.GetString(1);
+
+            if (existingColumn.Equals(
+                    columnName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                exists = true;
+                break;
+            }
+        }
+
+        if (exists)
+            return;
+
+        var alter = connection.CreateCommand();
+
+        alter.CommandText =
+            $"ALTER TABLE CpuSamples ADD COLUMN {columnName} {definition};";
+
+        await alter.ExecuteNonQueryAsync();
     }
     public async Task InsertAsync(IEnumerable<CpuSample> samples)
     {
@@ -75,4 +138,58 @@ public sealed class DatabaseService
         await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
         var c = connection.CreateCommand(); c.CommandText = "DELETE FROM CpuSamples; VACUUM;"; await c.ExecuteNonQueryAsync();
     }
+
+    public async Task<List<CpuSample>>
+    GetSamplesByProcessIdAsync(
+        int processId)
+    {
+        var results = new List<CpuSample>();
+
+        await using var connection =
+            new SqliteConnection(ConnectionString);
+
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+
+        command.CommandText =
+        """
+    SELECT
+        TimestampUtc,
+        ProcessId,
+        ProcessName,
+        CpuPercent,
+        WorkingSetBytes,
+        PrivateBytes,
+        HandleCount,
+        ThreadCount
+    FROM CpuSamples
+    WHERE ProcessId = $pid
+    ORDER BY TimestampUtc
+    """;
+
+        command.Parameters.AddWithValue(
+            "$pid",
+            processId);
+
+        await using var reader =
+            await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            results.Add(
+                new CpuSample(
+                    DateTime.Parse(reader.GetString(0)),
+                    reader.GetInt32(1),
+                    reader.GetString(2),
+                    reader.GetDouble(3),
+                    reader.GetInt64(4),
+                    reader.GetInt64(5),
+                    reader.GetInt32(6),
+                    reader.GetInt32(7)));
+        }
+
+        return results;
+    }
+
 }

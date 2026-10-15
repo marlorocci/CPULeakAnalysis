@@ -1,18 +1,23 @@
-using System.Collections.Generic;
+using CPULeakAnalysis.Models;
 using System.Collections.Specialized;
-using System.Linq;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
-using CPULeakAnalysis.Models;
+using System.Collections;
 
 namespace CPULeakAnalysis.Controls;
 
 public sealed class CpuChart : FrameworkElement
 {
+    private const double PlotLeftMargin = 58;
+    private const double PlotTopMargin = 12;
+    private const double PlotRightMargin = 12;
+    private const double PlotBottomMargin = 32;
+
     public static readonly DependencyProperty ItemsSourceProperty =
         DependencyProperty.Register(
             nameof(ItemsSource),
-            typeof(IEnumerable<CpuSample>),
+            typeof(IEnumerable),
             typeof(CpuChart),
             new FrameworkPropertyMetadata(
                 null,
@@ -30,16 +35,39 @@ public sealed class CpuChart : FrameworkElement
                 null,
                 CoerceZoomPercent));
 
-    public IEnumerable<CpuSample>? ItemsSource
+    public static readonly DependencyProperty TimeRangeProperty =
+        DependencyProperty.Register(
+            nameof(TimeRange),
+            typeof(TimeSpan),
+            typeof(CpuChart),
+            new FrameworkPropertyMetadata(
+                TimeSpan.FromHours(1),
+                FrameworkPropertyMetadataOptions.AffectsRender,
+                OnTimeRangeChanged,
+                CoerceTimeRange));
+
+    public IEnumerable? ItemsSource
     {
-        get => (IEnumerable<CpuSample>?)GetValue(ItemsSourceProperty);
+        get => (IEnumerable?)GetValue(ItemsSourceProperty);
         set => SetValue(ItemsSourceProperty, value);
     }
 
     public int ZoomPercent
     {
-        get => (int)GetValue(ZoomPercentProperty);
-        set => SetValue(ZoomPercentProperty, value);
+        get =>
+            (int)GetValue(ZoomPercentProperty);
+
+        set =>
+            SetValue(ZoomPercentProperty, value);
+    }
+
+    public TimeSpan TimeRange
+    {
+        get =>
+            (TimeSpan)GetValue(TimeRangeProperty);
+
+        set =>
+            SetValue(TimeRangeProperty, value);
     }
 
     private static readonly Color[] SeriesColors =
@@ -52,29 +80,63 @@ public sealed class CpuChart : FrameworkElement
         Colors.Coral,
         Colors.Cyan,
         Colors.HotPink,
-        Colors.LightGreen,
+        Colors.YellowGreen,
         Colors.Salmon
     };
 
     private static readonly Brush BackgroundBrush =
-        new SolidColorBrush(Color.FromRgb(24, 28, 36));
+        new SolidColorBrush(
+            Color.FromRgb(24, 28, 36));
+
+    private static readonly Brush AxisTextBrush =
+        new SolidColorBrush(
+            Color.FromRgb(170, 180, 198));
 
     private static readonly Pen GridPen =
         new(
-            new SolidColorBrush(Color.FromRgb(50, 56, 68)),
+            new SolidColorBrush(
+                Color.FromRgb(50, 56, 68)),
             1);
 
-    private static readonly Brush AxisTextBrush =
-        new SolidColorBrush(Color.FromRgb(170, 180, 198));
+    private static readonly Pen AxisPen =
+        new(
+            new SolidColorBrush(
+                Color.FromRgb(105, 116, 136)),
+            1);
 
     private static object CoerceZoomPercent(
         DependencyObject dependencyObject,
         object baseValue)
     {
         if (baseValue is not int value)
+        {
             return 100;
+        }
 
         return Math.Clamp(value, 10, 100);
+    }
+
+    private static object CoerceTimeRange(
+        DependencyObject dependencyObject,
+        object baseValue)
+    {
+        if (baseValue is not TimeSpan value ||
+            value <= TimeSpan.Zero)
+        {
+            return TimeSpan.FromHours(1);
+        }
+
+        return value;
+    }
+
+    private static void OnTimeRangeChanged(
+        DependencyObject dependencyObject,
+        DependencyPropertyChangedEventArgs eventArgs)
+    {
+        if (dependencyObject is CpuChart chart)
+        {
+            chart.InvalidateVisual();
+        }
     }
 
     private static void OnItemsSourceChanged(
@@ -109,140 +171,269 @@ public sealed class CpuChart : FrameworkElement
     {
         base.OnRender(drawingContext);
 
-        if (ActualWidth <= 0 || ActualHeight <= 0)
+        if (ActualWidth <= 0 ||
+            ActualHeight <= 0)
+        {
             return;
+        }
 
         drawingContext.DrawRectangle(
             BackgroundBrush,
             null,
-            new Rect(0, 0, ActualWidth, ActualHeight));
+            new Rect(
+                0,
+                0,
+                ActualWidth,
+                ActualHeight));
 
-        const double leftMargin = 55;
-        const double rightMargin = 15;
-        const double topMargin = 15;
-        const double bottomMargin = 30;
+        double plotLeft =
+            PlotLeftMargin;
 
-        double chartWidth =
-            Math.Max(1, ActualWidth - leftMargin - rightMargin);
+        double plotTop =
+            PlotTopMargin;
 
-        double chartHeight =
-            Math.Max(1, ActualHeight - topMargin - bottomMargin);
+        double plotWidth =
+            Math.Max(
+                0,
+                ActualWidth -
+                PlotLeftMargin -
+                PlotRightMargin);
 
-        DrawGrid(
-            drawingContext,
-            leftMargin,
-            topMargin,
-            chartWidth,
-            chartHeight);
+        double plotHeight =
+            Math.Max(
+                0,
+                ActualHeight -
+                PlotTopMargin -
+                PlotBottomMargin);
 
-        if (ItemsSource is null)
+        if (plotWidth <= 0 ||
+            plotHeight <= 0)
         {
-            DrawNoDataMessage(
-                drawingContext,
-                "No CPU data available.");
-
             return;
         }
 
-        DateTime sevenDayCutoff = DateTime.UtcNow.AddDays(-7);
+        double visibleCpuMax =
+            Math.Clamp(
+                ZoomPercent,
+                10,
+                100);
 
-        var data = ItemsSource
-            .Where(sample =>
-                sample.TimestampUtc >= sevenDayCutoff)
-            .OrderBy(sample => sample.TimestampUtc)
-            .ToList();
+        TimeSpan effectiveTimeRange =
+            TimeRange > TimeSpan.Zero
+                ? TimeRange
+                : TimeSpan.FromHours(1);
 
+        DateTime maximumTimestampUtc =
+            DateTime.UtcNow;
+
+        DateTime minimumTimestampUtc =
+            maximumTimestampUtc -
+            effectiveTimeRange;
+
+        // These methods are now part of the render pipeline.
+        DrawGrid(
+            drawingContext,
+            plotLeft,
+            plotTop,
+            plotWidth,
+            plotHeight);
+
+        DrawAxisLines(
+            drawingContext,
+            plotLeft,
+            plotTop,
+            plotWidth,
+            plotHeight);
+
+        DrawAxisLabels(
+            drawingContext,
+            plotLeft,
+            plotTop,
+            plotWidth,
+            plotHeight,
+            visibleCpuMax,
+            minimumTimestampUtc,
+            maximumTimestampUtc);
+        System.Diagnostics.Debug.WriteLine(
+    $"ItemsSource Type = {ItemsSource?.GetType().FullName ?? "NULL"}");
+
+        var allSamples = ItemsSource?
+    .Cast<CpuSample>()
+    .ToList() ?? [];
+
+        System.Diagnostics.Debug.WriteLine(
+            $"Samples Received: {allSamples.Count}");
+
+        if (allSamples.Count > 0)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Oldest Sample     : {allSamples.Min(x => x.TimestampUtc):O}");
+
+            System.Diagnostics.Debug.WriteLine(
+                $"Newest Sample     : {allSamples.Max(x => x.TimestampUtc):O}");
+
+            System.Diagnostics.Debug.WriteLine(
+                $"Minimum Timestamp : {minimumTimestampUtc:O}");
+
+            System.Diagnostics.Debug.WriteLine(
+                $"Maximum Timestamp : {maximumTimestampUtc:O}");
+        }
+
+        TimeSpan effectiveRange =
+    TimeRange == TimeSpan.Zero
+        ? TimeSpan.FromDays(7)
+        : TimeRange;
+
+        DateTime cutoffUtc =
+            DateTime.UtcNow - effectiveRange;
+
+
+
+        var data = ItemsSource?
+            .Cast<CpuSample>()
+            .Where(x => x.TimestampUtc >= cutoffUtc)
+            .OrderBy(x => x.TimestampUtc)
+            .ToList()
+            ?? [];
+        //debug
+        System.Diagnostics.Debug.WriteLine(
+    $"ItemsSource Count = {ItemsSource?.Cast<CpuSample>().Count() ?? 0}");
+
+        System.Diagnostics.Debug.WriteLine(
+            $"Chart Data Count = {data.Count}");
+
+        if (data.Count > 0)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"First Sample = {data.Min(x => x.TimestampUtc):O}");
+
+            System.Diagnostics.Debug.WriteLine(
+                $"Last Sample = {data.Max(x => x.TimestampUtc):O}");
+        }
+
+        System.Diagnostics.Debug.WriteLine(
+            $"Minimum Timestamp = {minimumTimestampUtc:O}");
+
+        System.Diagnostics.Debug.WriteLine(
+            $"Maximum Timestamp = {maximumTimestampUtc:O}");
+
+        //edn debug
         if (data.Count == 0)
         {
             DrawNoDataMessage(
                 drawingContext,
-                "No CPU data available for the last 7 days.");
+                "No CPU data available for the selected time range.",
+                plotLeft,
+                plotTop,
+                plotWidth,
+                plotHeight);
 
             return;
         }
 
-        long minimumTimestamp =
-            data.Min(sample => sample.TimestampUtc.Ticks);
+        long minimumTicks =
+            minimumTimestampUtc.Ticks;
 
-        long maximumTimestamp =
-            data.Max(sample => sample.TimestampUtc.Ticks);
+        long maximumTicks =
+            maximumTimestampUtc.Ticks;
 
-        if (maximumTimestamp == minimumTimestamp)
-            maximumTimestamp++;
-
-        double visibleCpuMax =
-            Math.Clamp(ZoomPercent, 10, 100);
+        long tickRange =
+            Math.Max(
+                1,
+                maximumTicks - minimumTicks);
 
         int colorIndex = 0;
 
-        foreach (var processGroup in data.GroupBy(
-                     sample => new
-                     {
-                         sample.ProcessName,
-                         sample.ProcessId
-                     }))
+        foreach (var group in data.GroupBy(
+                     sample => sample.DisplayName))
         {
-            Point[] points = processGroup
-                .OrderBy(sample => sample.TimestampUtc)
-                .Select(sample =>
-                {
-                    double xPosition =
-                        leftMargin +
-                        ((sample.TimestampUtc.Ticks - minimumTimestamp) /
-                         (double)(maximumTimestamp - minimumTimestamp) *
-                         chartWidth);
+            var orderedSamples =
+                group
+                    .OrderBy(sample =>
+                        sample.TimestampUtc)
+                    .ToList();
 
-                    double boundedCpu =
-                        Math.Clamp(
-                            sample.CpuPercent,
-                            0,
-                            visibleCpuMax);
+            var points =
+                orderedSamples
+                    .Select(sample =>
+                    {
+                        double xPosition =
+                            plotLeft +
+                            (
+                                sample.TimestampUtc.Ticks -
+                                minimumTicks
+                            ) /
+                            (double)tickRange *
+                            plotWidth;
 
-                    double yPosition =
-                        topMargin +
-                        chartHeight -
-                        (boundedCpu /
-                         visibleCpuMax *
-                         chartHeight);
+                        double displayedCpu =
+                            Math.Clamp(
+                                sample.CpuPercent,
+                                0,
+                                visibleCpuMax);
 
-                    return new Point(
-                        xPosition,
-                        yPosition);
-                })
-                .ToArray();
+                        double yPosition =
+                            plotTop +
+                            plotHeight -
+                            (
+                                displayedCpu /
+                                visibleCpuMax *
+                                plotHeight
+                            );
 
-            if (points.Length < 2)
-                continue;
+                        return new Point(
+                            xPosition,
+                            yPosition);
+                    })
+                    .ToArray();
 
             Color seriesColor =
-                SeriesColors[colorIndex % SeriesColors.Length];
+                SeriesColors[
+                    colorIndex %
+                    SeriesColors.Length];
 
             colorIndex++;
 
-            var seriesPen = new Pen(
-                new SolidColorBrush(seriesColor),
-                1.7);
+            var seriesBrush =
+                new SolidColorBrush(seriesColor);
 
-            seriesPen.Freeze();
+            if (points.Length == 1)
+            {
+                drawingContext.DrawEllipse(
+                    seriesBrush,
+                    null,
+                    points[0],
+                    2.5,
+                    2.5);
 
-            var geometry =
-                CreateLineGeometry(points);
+                continue;
+            }
+
+            var geometry = new StreamGeometry();
+
+            using (var context = geometry.Open())
+            {
+                context.BeginFigure(
+                    points[0],
+                    false,
+                    false);
+
+                context.PolyLineTo(
+                    points.Skip(1).ToList(),
+                    true,
+                    false);
+            }
+
+            geometry.Freeze();
+
+            var seriesPen =
+                new Pen(seriesBrush, 1.7);
 
             drawingContext.DrawGeometry(
                 null,
                 seriesPen,
                 geometry);
         }
-
-        DrawAxisLabels(
-            drawingContext,
-            leftMargin,
-            topMargin,
-            chartWidth,
-            chartHeight,
-            visibleCpuMax,
-            new DateTime(minimumTimestamp, DateTimeKind.Utc),
-            new DateTime(maximumTimestamp, DateTimeKind.Utc));
     }
 
     private static void DrawGrid(
@@ -261,7 +452,9 @@ public sealed class CpuChart : FrameworkElement
         {
             double y =
                 top +
-                (index * height / horizontalSections);
+                index *
+                height /
+                horizontalSections;
 
             drawingContext.DrawLine(
                 GridPen,
@@ -275,13 +468,33 @@ public sealed class CpuChart : FrameworkElement
         {
             double x =
                 left +
-                (index * width / verticalSections);
+                index *
+                width /
+                verticalSections;
 
             drawingContext.DrawLine(
                 GridPen,
                 new Point(x, top),
                 new Point(x, top + height));
         }
+    }
+
+    private static void DrawAxisLines(
+        DrawingContext drawingContext,
+        double left,
+        double top,
+        double width,
+        double height)
+    {
+        drawingContext.DrawLine(
+            AxisPen,
+            new Point(left, top),
+            new Point(left, top + height));
+
+        drawingContext.DrawLine(
+            AxisPen,
+            new Point(left, top + height),
+            new Point(left + width, top + height));
     }
 
     private void DrawAxisLabels(
@@ -303,18 +516,22 @@ public sealed class CpuChart : FrameworkElement
         {
             double cpuValue =
                 visibleCpuMax -
-                (visibleCpuMax *
-                 index /
-                 horizontalSections);
+                (
+                    visibleCpuMax *
+                    index /
+                    horizontalSections
+                );
 
             double y =
                 top +
-                (index * height / horizontalSections);
+                index *
+                height /
+                horizontalSections;
 
-            DrawText(
+            DrawRightAlignedText(
                 drawingContext,
                 $"{cpuValue:0}%",
-                4,
+                left - 7,
                 y - 8);
         }
 
@@ -337,79 +554,171 @@ public sealed class CpuChart : FrameworkElement
 
             double x =
                 left +
-                (index * width / verticalSections);
+                index *
+                width /
+                verticalSections;
 
             string label =
-                localTimestamp.ToString("MM/dd");
+                GetTimeAxisLabel(
+                    localTimestamp,
+                    visiblePeriod);
 
-            DrawText(
-                drawingContext,
-                label,
-                x - 16,
-                top + height + 5);
+            FormattedText formattedText =
+                CreateFormattedText(
+                    label,
+                    10);
+
+            double labelX =
+                x -
+                formattedText.Width /
+                2;
+
+            labelX =
+                Math.Clamp(
+                    labelX,
+                    left,
+                    Math.Max(
+                        left,
+                        left +
+                        width -
+                        formattedText.Width));
+
+            drawingContext.DrawText(
+                formattedText,
+                new Point(
+                    labelX,
+                    top + height + 5));
         }
     }
 
-    private void DrawNoDataMessage(
-        DrawingContext drawingContext,
-        string message)
+    private static string GetTimeAxisLabel(
+        DateTime localTimestamp,
+        TimeSpan visiblePeriod)
     {
-        var formattedText = new FormattedText(
-            message,
-            System.Globalization.CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight,
-            new Typeface("Segoe UI"),
-            14,
-            AxisTextBrush,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        if (visiblePeriod <= TimeSpan.FromHours(24))
+        {
+            return localTimestamp.ToString(
+                "HH:mm",
+                CultureInfo.CurrentCulture);
+        }
+
+        return localTimestamp.ToString(
+            "MM/dd",
+            CultureInfo.CurrentCulture);
+    }
+
+    //private void DrawNoDataMessage(
+    //    DrawingContext drawingContext,
+    //    string message,
+    //    double plotLeft,
+    //    double plotTop,
+    //    double plotWidth,
+    //    double plotHeight)
+    //{
+    //    FormattedText formattedText =
+    //        CreateFormattedText(
+    //            message,
+    //            14);
+
+    //    double x =
+    //        plotLeft +
+    //        Math.Max(
+    //            0,
+    //            (
+    //                plotWidth -
+    //                formattedText.Width
+    //            ) /
+    //            2);
+
+    //    double y =
+    //        plotTop +
+    //        Math.Max(
+    //            0,
+    //            (
+    //                plotHeight -
+    //                formattedText.Height
+    //            ) /
+    //            2);
+
+    //    drawingContext.DrawText(
+    //        formattedText,
+    //        new Point(x, y));
+    //}
+
+    private void DrawRightAlignedText(
+        DrawingContext drawingContext,
+              string text,
+        double right,
+        double y)
+    {
+        FormattedText formattedText =
+            CreateFormattedText(
+                text,
+                11);
 
         drawingContext.DrawText(
             formattedText,
             new Point(
-                Math.Max(
-                    10,
-                    (ActualWidth - formattedText.Width) / 2),
-                Math.Max(
-                    10,
-                    (ActualHeight - formattedText.Height) / 2)));
+                right - formattedText.Width,
+                y));
     }
 
-    private void DrawText(
-        DrawingContext drawingContext,
+    private FormattedText CreateFormattedText(
         string text,
-        double x,
-        double y)
+        double fontSize)
     {
-        var formattedText = new FormattedText(
+        return new FormattedText(
             text,
-            System.Globalization.CultureInfo.CurrentCulture,
+            CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
             new Typeface("Segoe UI"),
-            11,
+            fontSize,
             AxisTextBrush,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            VisualTreeHelper
+                .GetDpi(this)
+                .PixelsPerDip);
+    }
+
+    private void DrawNoDataMessage(
+        DrawingContext drawingContext,
+        string message,
+        double plotLeft,
+        double plotTop,
+        double plotWidth,
+        double plotHeight)
+    {
+        FormattedText formattedText =
+            CreateFormattedText(
+                message,
+                14);
 
         drawingContext.DrawText(
             formattedText,
-            new Point(x, y));
+            new Point(
+                plotLeft +
+                (plotWidth - formattedText.Width) / 2,
+                plotTop +
+                (plotHeight - formattedText.Height) / 2));
     }
 
     private static StreamGeometry CreateLineGeometry(
         IReadOnlyList<Point> points)
     {
-        var geometry = new StreamGeometry();
+        var geometry =
+            new StreamGeometry();
 
-        using (StreamGeometryContext context = geometry.Open())
+        using (StreamGeometryContext context =
+               geometry.Open())
         {
             context.BeginFigure(
                 points[0],
-                isFilled: false,
-                isClosed: false);
+                false,
+                false);
 
             context.PolyLineTo(
                 points.Skip(1).ToList(),
-                isStroked: true,
-                isSmoothJoin: false);
+                true,
+                false);
         }
 
         geometry.Freeze();

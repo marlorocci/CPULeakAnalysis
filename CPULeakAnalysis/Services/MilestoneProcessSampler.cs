@@ -10,6 +10,16 @@ public sealed class MilestoneProcessSampler
         var now = DateTime.UtcNow; var output = new List<CpuSample>(); var live = new HashSet<int>();
         foreach (var p in Process.GetProcesses())
         {
+            try
+            {
+                Debug.WriteLine($"Found process: {p.ProcessName}");
+
+                if (!IsMilestone(p))
+                    continue;
+
+                Debug.WriteLine($"MATCHED: {p.ProcessName}");
+            }
+            catch { }
             using (p)
             {
                 try
